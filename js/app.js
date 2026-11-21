@@ -7,11 +7,9 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp
 const pad = n => String(n).padStart(2, '0');
 const fmt = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
 const T = () => fmt(new Date());
-const addDays = (s, n) => { const d = new Date(s + 'T00:00:00'); d.setDate(d.getDate() + n); return fmt(d); };
 const diff = s => Math.round((new Date(s + 'T00:00:00') - new Date(T() + 'T00:00:00')) / 864e5);
 const nice = s => new Date(s + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-const SESSION = 'enactus_hub_session';
 
 const I = {
   plus: '<path d="M12 5v14M5 12h14"/>',
@@ -24,8 +22,7 @@ const I = {
   back: '<path d="M19 12H5M11 6l-6 6 6 6"/>',
   cam: '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
   left: '<path d="M15 6l-6 6 6 6"/>',
-  right: '<path d="M9 6l6 6-6 6"/>',
-  undo: '<path d="M9 14L4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3"/>'
+  right: '<path d="M9 6l6 6-6 6"/>'
 };
 const ic = (n, c = '') => `<svg class="i ${c}" viewBox="0 0 24 24">${I[n]}</svg>`;
 
@@ -38,12 +35,15 @@ const DEFAULT_LEGEND = [
 ];
 
 /* ================= State ================= */
-let DB = { people: [], tasks: [], links: [], legend: [] };
+const EMPTY = () => ({ people: [], tasks: [], links: [], legend: [] });
+let DB = EMPTY();
+let loaded = false;
 let S = { view: 'home', pid: null, tab: 'tasks', month: T().slice(0, 7), day: T() };
 let M = null;
 let photoTmp = null;
 
-const persist = () => Storage.save(DB);
+// الحفظ بيروح لـ Firebase، والشاشة بتتحدث فورًا من غير ما تستنى
+const persist = () => { Store.save(DB).catch(() => toast('Could not save — check your connection')); };
 const person = id => DB.people.find(p => p.id === id);
 const colorOf = id => DB.legend.find(l => l.id === id) || { color: '#9a9a9a', name: '' };
 const emailOf = p => (p && (p.email || CONFIG.HEAD_EMAILS[p.name])) || '';
@@ -133,12 +133,13 @@ function vSet() {
   <div class="card">${DB.legend.map(l => `<div class="lg-row"><input type="color" data-chg="lc" data-id="${l.id}" value="${l.color}"><input type="text" dir="auto" data-chg="ln" data-id="${l.id}" value="${esc(l.name)}"><button class="ico red" data-act="delc" data-id="${l.id}">${ic('trash')}</button></div>`).join('')}</div>
   <button class="btn pri block" style="margin-top:12px" data-act="addc">${ic('plus')} Add color</button>
   <h2 class="sec">Backup</h2><div class="acts"><button class="btn" data-act="export">Download backup</button><button class="btn" data-act="import">Restore from backup</button></div>
-  <p class="mut">Your data is saved in this browser only. Download a backup from time to time, and use it to move your data to another device.</p>
+  <p class="mut">Your data is saved online and synced across all your devices. A backup file is just an extra safety copy.</p>
   <h2 class="sec">Account</h2><button class="btn red" data-act="logout">Log out</button></div>`;
 }
 
 function render() {
   document.querySelectorAll('[data-v]').forEach(b => b.classList.toggle('on', b.dataset.v === (S.view === 'prof' ? 'home' : S.view)));
+  if (!loaded) { $('#view').innerHTML = '<div class="card mut" style="margin-top:12px">Loading your data…</div>'; return; }
   $('#view').innerHTML = S.view === 'home' ? vHome() : S.view === 'prof' ? vProf() : S.view === 'cal' ? vCal() : vSet();
 }
 
@@ -214,20 +215,20 @@ function resizeImg(file) {
   });
 }
 
-async function savePerson() {
+function savePerson() {
   const name = val('#pName').trim();
   if (!name) return toast('Write the name');
   const role = (document.querySelector('input[name=pRole]:checked') || {}).value || 'Head';
   const data = { name, role, committee: val('#pCom').trim(), email: val('#pMail').trim(), photo: photoTmp };
   if (M.id) Object.assign(person(M.id), data); else DB.people.push({ id: uid(), ...data });
-  await persist(); closeModal(); render();
+  persist(); closeModal(); render();
 }
 
-async function deletePerson() {
+function deletePerson() {
   if (!confirm('Delete this person with all their tasks and links?')) return;
   DB.tasks = DB.tasks.filter(t => t.pid !== M.id); DB.links = DB.links.filter(l => l.pid !== M.id);
   DB.people = DB.people.filter(p => p.id !== M.id);
-  S.view = 'home'; await persist(); closeModal(); render();
+  S.view = 'home'; persist(); closeModal(); render();
 }
 
 async function sendTaskEmail(p, t) {
@@ -240,7 +241,7 @@ async function sendTaskEmail(p, t) {
   } catch (e) { toast('Email failed — check EmailJS settings'); }
 }
 
-async function saveTask() {
+function saveTask() {
   const title = val('#tTitle').trim();
   if (!title) return toast('Write the task title');
   const data = { pid: val('#tPid'), title, due: val('#tDue'), color: (document.querySelector('input[name=tc]:checked') || {}).value || '', note: val('#tNote').trim(), privateNote: val('#tPriv').trim() };
@@ -248,21 +249,21 @@ async function saveTask() {
   let t;
   if (M.id) { t = DB.tasks.find(x => x.id === M.id); Object.assign(t, data); }
   else { t = { id: uid(), status: 'open', created: Date.now(), ...data }; DB.tasks.push(t); }
-  await persist(); closeModal(); render();
+  persist(); closeModal(); render();
   if (wantMail) sendTaskEmail(person(t.pid), t);
 }
 
-async function saveLink() {
+function saveLink() {
   const name = val('#lName').trim(); let url = val('#lUrl').trim();
   if (!name || !url) return toast('Write the name and the link');
   if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
   if (M.id) Object.assign(DB.links.find(l => l.id === M.id), { name, url });
   else DB.links.push({ id: uid(), pid: S.pid, name, url, created: Date.now() });
-  await persist(); closeModal(); render();
+  persist(); closeModal(); render();
 }
 
 /* ================= Events ================= */
-document.addEventListener('click', async e => {
+document.addEventListener('click', e => {
   if (e.target.id === 'modal') return closeModal();
   const nb = e.target.closest('[data-v]');
   if (nb) { S.view = nb.dataset.v; return render(); }
@@ -282,77 +283,97 @@ document.addEventListener('click', async e => {
     case 'addt': taskModal({ pid: S.view === 'prof' ? S.pid : '', due: el.dataset.due || '' }); break;
     case 'editt': taskModal(task); break;
     case 'savet': saveTask(); break;
-    case 'delt': if (confirm('Delete this task?')) { DB.tasks = DB.tasks.filter(t => t.id !== M.id); await persist(); closeModal(); render(); } break;
-    case 'done': task.status = 'done'; task.doneAt = Date.now(); await persist(); render(); toast('Moved to Done'); break;
-    case 'restore': task.status = 'open'; task.doneAt = null; await persist(); render(); toast('Task restored'); break;
+    case 'delt': if (confirm('Delete this task?')) { DB.tasks = DB.tasks.filter(t => t.id !== M.id); persist(); closeModal(); render(); } break;
+    case 'done': task.status = 'done'; task.doneAt = Date.now(); persist(); render(); toast('Moved to Done'); break;
+    case 'restore': task.status = 'open'; task.doneAt = null; persist(); render(); toast('Task restored'); break;
     case 'post': postModal(task); break;
-    case 'postok': { const d = val('#pDue'); if (!d) return toast('Pick a date'); DB.tasks.find(t => t.id === M.id).due = d; await persist(); closeModal(); render(); toast('Date updated'); break; }
+    case 'postok': { const d = val('#pDue'); if (!d) return toast('Pick a date'); DB.tasks.find(t => t.id === M.id).due = d; persist(); closeModal(); render(); toast('Date updated'); break; }
     case 'addl': linkModal(); break;
     case 'editl': linkModal(DB.links.find(l => l.id === id)); break;
     case 'savel': saveLink(); break;
-    case 'dell': if (confirm('Delete this link?')) { DB.links = DB.links.filter(l => l.id !== M.id); await persist(); closeModal(); render(); } break;
-    case 'dellink': if (confirm('Delete this link?')) { DB.links = DB.links.filter(l => l.id !== id); await persist(); render(); } break;
+    case 'dell': if (confirm('Delete this link?')) { DB.links = DB.links.filter(l => l.id !== M.id); persist(); closeModal(); render(); } break;
+    case 'dellink': if (confirm('Delete this link?')) { DB.links = DB.links.filter(l => l.id !== id); persist(); render(); } break;
     case 'day': S.day = id; render(); break;
     case 'mo': { const [y, m] = S.month.split('-').map(Number); S.month = fmt(new Date(y, m - 1 + Number(id), 1)).slice(0, 7); render(); break; }
-    case 'addc': DB.legend.push({ id: uid(), color: '#888888', name: 'New color' }); await persist(); render(); break;
-    case 'delc': if (confirm('Delete this color? Tasks using it will show no color.')) { DB.legend = DB.legend.filter(l => l.id !== id); await persist(); render(); } break;
-    case 'export': Storage.exportJSON(DB); break;
+    case 'addc': DB.legend.push({ id: uid(), color: '#888888', name: 'New color' }); persist(); render(); break;
+    case 'delc': if (confirm('Delete this color? Tasks using it will show no color.')) { DB.legend = DB.legend.filter(l => l.id !== id); persist(); render(); } break;
+    case 'export': Store.exportJSON(DB); break;
     case 'import': $('#importFile').click(); break;
-    case 'logout': localStorage.removeItem(SESSION); showLogin(); break;
+    case 'logout': Store.signOut(); break;
   }
 });
 
 document.addEventListener('change', async e => {
   const t = e.target;
-  // Legend edits
-  if (t.dataset && t.dataset.chg) {
+  if (t.dataset && t.dataset.chg) {                      // Legend edits
     const l = DB.legend.find(x => x.id === t.dataset.id); if (!l) return;
     if (t.dataset.chg === 'lc') l.color = t.value; else l.name = t.value;
-    await persist(); return;
+    persist(); return;
   }
-  // Color caption in task modal
   if (t.name === 'tc') { const c = $('#cname'); if (c) c.textContent = t.dataset.n || ''; return; }
-  // Photo chosen in person modal
-  if (t.id === 'pPhoto' && t.files[0]) {
+  if (t.id === 'pPhoto' && t.files[0]) {                 // Photo in person modal
     photoTmp = await resizeImg(t.files[0]);
     $('#pPrev').innerHTML = `<img class="av lg" src="${photoTmp}" alt="">`;
   }
 });
 
-// Restore backup
 $('#importFile').addEventListener('change', e => {
   const f = e.target.files[0]; if (!f) return;
   const r = new FileReader();
-  r.onload = async () => {
+  r.onload = () => {
     try {
       const d = JSON.parse(r.result);
       if (!Array.isArray(d.people) || !Array.isArray(d.tasks)) throw 0;
-      if (!confirm('This replaces everything in this browser with the backup. Continue?')) return;
-      DB = Object.assign({ people: [], tasks: [], links: [], legend: [] }, d);
-      await persist(); render(); toast('Backup restored');
+      if (!confirm('This replaces ALL your current data with the backup. Continue?')) return;
+      DB = Object.assign(EMPTY(), d);
+      persist(); render(); toast('Backup restored');
     } catch (x) { toast('Not a valid backup file'); }
   };
   r.readAsText(f); e.target.value = '';
 });
 
-/* ================= Login & boot ================= */
-function showLogin() { $('#app').hidden = true; $('#login').hidden = false; $('#loginEmail').value = ''; }
-function showApp() { $('#login').hidden = true; $('#app').hidden = false; render(); }
+/* ================= Login, sync & boot ================= */
+let unsub = null, denyMsg = '';
 
-function tryLogin() {
-  const em = $('#loginEmail').value.trim().toLowerCase();
-  if (em && em === CONFIG.OWNER_EMAIL.trim().toLowerCase()) {
-    localStorage.setItem(SESSION, em); $('#loginErr').hidden = true; showApp();
-  } else $('#loginErr').hidden = false;
+function showLogin() {
+  $('#app').hidden = true; $('#login').hidden = false;
+  const er = $('#loginErr'); er.textContent = denyMsg; er.hidden = !denyMsg; denyMsg = '';
+  $('#loginBtn').disabled = false;
 }
-$('#loginBtn').addEventListener('click', tryLogin);
-$('#loginEmail').addEventListener('keydown', e => { if (e.key === 'Enter') tryLogin(); });
 
-(async function boot() {
-  const d = await Storage.load();
-  DB = Object.assign({ people: [], tasks: [], links: [], legend: [] }, d || {});
-  if (!DB.legend.length) { DB.legend = DEFAULT_LEGEND.map(x => ({ ...x })); await persist(); }
-  if (CONFIG.EMAILJS.ENABLED && typeof emailjs !== 'undefined') emailjs.init({ publicKey: CONFIG.EMAILJS.PUBLIC_KEY });
-  if (localStorage.getItem(SESSION) === CONFIG.OWNER_EMAIL.trim().toLowerCase()) showApp(); else showLogin();
-})();
+function onData(data, fromCache) {
+  if (data) { DB = Object.assign(EMPTY(), data); loaded = true; render(); return; }
+  if (fromCache) return;                                  // wait for the server's answer
+  // First time ever: create the document (and bring over data saved in this browser, if any)
+  const old = Store.legacy();
+  DB = Object.assign(EMPTY(), old || {});
+  if (!DB.legend.length) DB.legend = DEFAULT_LEGEND.map(x => ({ ...x }));
+  loaded = true; persist(); render();
+  if (old && old.people && old.people.length) toast('Imported the data saved in this browser');
+}
+
+function startSync() {
+  if (unsub) return;
+  loaded = false; $('#login').hidden = true; $('#app').hidden = false; render();
+  unsub = Store.subscribe(onData, err => {
+    $('#view').innerHTML = `<div class="card red" style="margin-top:12px">Can’t read your data (${esc(err.code || 'error')}). Check the Firestore rules and that you signed in with the right Google account.</div>`;
+  });
+}
+
+$('#loginBtn').addEventListener('click', async () => {
+  $('#loginBtn').disabled = true;
+  try { await Store.signIn(); }
+  catch (e) { denyMsg = 'Sign-in didn’t finish. Allow pop-ups for this site and try again.'; showLogin(); }
+});
+
+if (CONFIG.EMAILJS.ENABLED && typeof emailjs !== 'undefined') emailjs.init({ publicKey: CONFIG.EMAILJS.PUBLIC_KEY });
+
+Store.onAuth(user => {
+  if (!user) { if (unsub) { unsub(); unsub = null; } loaded = false; showLogin(); return; }
+  if ((user.email || '').toLowerCase() !== CONFIG.OWNER_EMAIL.trim().toLowerCase()) {
+    denyMsg = 'This Google account isn’t allowed: ' + user.email;
+    Store.signOut(); return;
+  }
+  startSync();
+});
 })();
