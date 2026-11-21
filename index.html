@@ -12,17 +12,16 @@
 </head>
 <body>
 
-<!-- Login screen (cosmetic gate, see config.js) -->
+<!-- Login screen -->
 <section id="login" class="login" hidden>
   <div class="card login-box">
     <div class="brand big">
       <svg viewBox="0 0 24 24"><path d="M3 3l18 9-18 9 4.5-9z" fill="#f7b500"/></svg>
       Enactus BUC
     </div>
-    <p class="mut" style="text-align:center;margin:0">Heads Hub — enter your email to continue</p>
-    <input type="email" id="loginEmail" placeholder="you@example.com" autocomplete="email">
-    <p id="loginErr" class="red" hidden style="margin:0">This email isn’t allowed.</p>
-    <button class="btn pri block" id="loginBtn">Continue</button>
+    <p class="mut" style="text-align:center;margin:0">Heads Hub — sign in to continue</p>
+    <p id="loginErr" class="red" hidden style="margin:0;text-align:center"></p>
+    <button class="btn pri block" id="loginBtn">Sign in with Google</button>
   </div>
 </section>
 
@@ -50,7 +49,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4.4.1/dist/email.min.js"></script>
 <script src="js/config.js"></script>
-<script src="js/storage.js"></script>
-<script src="js/app.js"></script>
+<script type="module" src="js/storage.js"></script>
+<script type="module" src="js/app.js"></script>
 </body>
 </html>
